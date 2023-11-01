@@ -22,6 +22,9 @@
 #include "list.h"
 #include "log.h"
 
+#include <libinput.h>
+#include <libudev.h>
+
 #define DEFAULT_SEAT "seat0"
 
 struct input_config *current_input_config = NULL;
@@ -63,6 +66,29 @@ struct sway_seat *input_manager_sway_seat_from_wlr_seat(struct wlr_seat *wlr_sea
 }
 
 char *input_device_get_identifier(struct wlr_input_device *device) {
+
+	const char *usb_name = NULL;
+
+	if (wlr_input_device_is_libinput(device)) {
+		struct libinput_device *libinput_device = wlr_libinput_get_device_handle(device);
+		struct udev_device *udev_device = libinput_device_get_udev_device(libinput_device);
+
+		if (udev_device != NULL) {
+			struct udev_device *parent = udev_device;
+
+			do {
+				const char *subsystem = udev_device_get_subsystem(parent);
+				if (subsystem != NULL && strncmp(subsystem, "usb", 3) == 0) {
+					usb_name = udev_device_get_sysname(parent);
+				}
+
+				parent = udev_device_get_parent(parent);
+			} while (usb_name == NULL && parent != NULL);
+
+			udev_device_unref(udev_device);
+		}
+	}
+
 	int vendor = device->vendor;
 	int product = device->product;
 	char *name = strdup(device->name ? device->name : "");
@@ -76,15 +102,24 @@ char *input_device_get_identifier(struct wlr_input_device *device) {
 		}
 	}
 
-	const char *fmt = "%d:%d:%s";
-	int len = snprintf(NULL, 0, fmt, vendor, product, name) + 1;
+	// const char *fmt = "%d:%d:%s";
+	// int len = snprintf(NULL, 0, fmt, vendor, product, name) + 1;
+	const char *fmt = usb_name ? "usb:%s" : "%d:%d:%s";
+	int len = usb_name
+		? snprintf(NULL, 0, fmt, usb_name) + 1
+		: snprintf(NULL, 0, fmt, vendor, product, name) + 1;
 	char *identifier = malloc(len);
 	if (!identifier) {
 		sway_log(SWAY_ERROR, "Unable to allocate unique input device name");
 		return NULL;
 	}
 
-	snprintf(identifier, len, fmt, vendor, product, name);
+	// snprintf(identifier, len, fmt, vendor, product, name);
+	if (usb_name) {
+		snprintf(identifier, len, fmt, usb_name);
+	} else {
+		snprintf(identifier, len, fmt, vendor, product, name);
+	}
 	free(name);
 	return identifier;
 }
